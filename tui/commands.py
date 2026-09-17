@@ -11,7 +11,10 @@ Available commands:
   /set-environment <none|self|openai>   Set the environment type for the next session
   /set-model <model>                    Set the agent model (default: gpt-6-astra)
   /set-instructions <text>             Set the agent instructions
-  /create-session [<initial message>]  Create a new session; optional text is sent as the first message
+  /create-session [--web_search] [--tool_cep] [<initial message>]
+                                       Create a new session; --web_search enables web search tool with low reasoning effort;
+                                       --tool_cep registers the get_customer/CEP lookup function tool
+  /connect-session <session_id>        Connect to an existing session by ID
   /delete-session                      Delete the active session
   /delete-other-sessions               Delete all API sessions except the currently active one
   /list-sessions [<limit>]             List active sessions from the API (default limit: 20)
@@ -53,6 +56,7 @@ KNOWN_COMMANDS = {
     "set-model",
     "set-instructions",
     "create-session",
+    "connect-session",
     "delete-session",
     "delete-other-sessions",
     "list-sessions",

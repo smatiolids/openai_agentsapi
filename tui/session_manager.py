@@ -8,6 +8,8 @@ from typing import Optional, Tuple
 from openai import OpenAI
 from openai._streaming import Stream
 
+from tui.tools import CEP_TOOL_DEFINITION
+
 
 @dataclass
 class SessionStats:
@@ -26,7 +28,9 @@ class SessionConfig:
     environment_type: str = "none"  # "none" | "self_hosted" | "openai_hosted"
     workspace_directory: str = "/tmp/openai_agent_workspace"
     input_text: str = ""  # optional first message sent when the session is created
-    tools: list = field(default_factory=lambda: [{"type": "web_search", "mode": "live"}])
+    tools: list = field(default_factory=list)
+    web_search: bool = False  # when True, add web_search tool + low reasoning effort
+    tool_cep: bool = False    # when True, add CEP function tool
 
 
 @dataclass
@@ -67,12 +71,22 @@ class SessionManager:
         else:
             raise ValueError(f"Unknown environment type: {config.environment_type!r}")
 
+        tools = list(config.tools)
+        if config.web_search:
+            tools.append({"type": "web_search", "mode": "live"})
+        if config.tool_cep:
+            tools.append(CEP_TOOL_DEFINITION)
+
+        agent_dict: dict = {
+            "model": config.model,
+            "instructions": config.instructions,
+            "tools": tools,
+        }
+        if config.web_search:
+            agent_dict["reasoning"] = {"effort": "low"}
+
         create_kwargs: dict = dict(
-            agent={
-                "model": config.model,
-                "instructions": config.instructions,
-                "tools": config.tools,
-            },
+            agent=agent_dict,
             environment=env,
             stream=True,
         )
@@ -143,6 +157,36 @@ class SessionManager:
             if output_details is not None:
                 stats.reasoning_tokens += getattr(output_details, "reasoning_tokens", 0) or 0
         return stats
+
+    def attach(self, session_id: str) -> tuple[ActiveSession, object]:
+        """
+        Attach to an existing session by ID without creating a new one.
+
+        Returns ``(ActiveSession, session_obj)`` where *session_obj* is the raw
+        API object so callers can inspect its fields without a second round-trip.
+
+        Raises ``RuntimeError`` if a session is already active or the session
+        cannot be retrieved.
+        """
+        if self._session is not None:
+            raise RuntimeError("A session is already active. Delete it first.")
+        session_obj = self._client.beta.agents.sessions.retrieve(session_id)
+        env_id = None
+        remote_url = None
+        env_resource = getattr(session_obj, "environment", None)
+        if env_resource is not None:
+            env_id = getattr(env_resource, "id", None)
+            remote_url = (
+                getattr(env_resource, "remote_url", None)
+                or getattr(env_resource, "remoteUrl", None)
+            )
+        self._session = ActiveSession(
+            session_id=session_obj.id,
+            config=SessionConfig(),
+            environment_remote_url=remote_url,
+            environment_id=env_id,
+        )
+        return self._session, session_obj
 
     def retrieve_session(self, session_id: str):
         """Fetch the full AgentSession object from the API."""

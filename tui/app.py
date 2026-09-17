@@ -16,6 +16,7 @@ from tui.event_handler import stream_events, stream_session
 from tui.harness import HarnessManager
 from tui import history as history_file
 from tui.session_manager import ActiveSession, SessionConfig, SessionManager
+from tui.tools import dispatch_function_calls
 
 load_dotenv()
 
@@ -287,8 +288,18 @@ class AgentsApp(App):
                 self._log("info", f"Instructions set to: {self._config.instructions!r}")
 
             case "create-session":
-                initial = " ".join(parsed.args) if parsed.args else ""
-                self._run_command(lambda: self._cmd_create_session(initial))
+                remaining = [a for a in parsed.args if a not in ("--web_search", "--tool_cep")]
+                web_search = "--web_search" in parsed.args
+                tool_cep = "--tool_cep" in parsed.args
+                initial = " ".join(remaining)
+                self._run_command(lambda: self._cmd_create_session(initial, web_search, tool_cep))
+
+            case "connect-session":
+                if not parsed.args:
+                    self._log("error", "Usage: /connect-session <session_id>")
+                    return
+                session_id = parsed.args[0]
+                self._run_command(lambda: self._cmd_connect_session(session_id))
 
             case "delete-session":
                 self._run_command(self._cmd_delete_session)
@@ -315,11 +326,13 @@ class AgentsApp(App):
             case "exit":
                 self._cmd_exit()
 
-    def _cmd_create_session(self, initial: str = "") -> None:
+    def _cmd_create_session(self, initial: str = "", web_search: bool = False, tool_cep: bool = False) -> None:
         if self._session_mgr.active:
             self._log("error", "A session is already active. Use /delete-session first.")
             return
         self._config.input_text = initial
+        self._config.web_search = web_search
+        self._config.tool_cep = tool_cep
         self._log("system", "Creating session…")
         try:
             session, init_stream = self._session_mgr.create(self._config)
@@ -328,6 +341,8 @@ class AgentsApp(App):
             return
 
         self._log("info", f"Session created: {session.session_id}")
+        if session.environment_id:
+            self._log("info", f"  environment_id: {session.environment_id}")
 
         if self._config.environment_type == "openai_hosted":
             if not session.environment_remote_url or not session.environment_id:
@@ -360,6 +375,42 @@ class AgentsApp(App):
                     ),
                 )
             )
+
+    def _cmd_connect_session(self, session_id: str) -> None:
+        if self._session_mgr.active:
+            self._log("error", "A session is already active. Use /delete-session first.")
+            return
+        self._log("system", f"Connecting to session {session_id}…")
+        try:
+            session, session_obj = self._session_mgr.attach(session_id)
+        except Exception as exc:
+            self._log("error", f"Failed to connect to session: {exc}")
+            return
+        self._log("info", f"Connected to session: {session.session_id}")
+        self.call_from_thread(setattr, self, "sub_title", f"session: {session.session_id[:12]}…")
+
+        # Print current session state
+        status = getattr(session_obj, "status", None)
+        agent = getattr(session_obj, "agent", None)
+        model = getattr(agent, "model", None) if agent else None
+        env_resource = getattr(session_obj, "environment", None)
+        env_type = getattr(env_resource, "type", None) if env_resource else None
+        created_at = getattr(session_obj, "created_at", None)
+
+        self._log("info", "── Session state ─────────────────────────────────")
+        if status is not None:
+            self._log("info", f"  status      : {status}")
+        if model is not None:
+            self._log("info", f"  model       : {model}")
+        if env_type is not None:
+            self._log("info", f"  environment : {env_type}")
+        if session.environment_id:
+            self._log("info", f"  env id      : {session.environment_id}")
+        if session.environment_remote_url:
+            self._log("info", f"  remote url  : {session.environment_remote_url}")
+        if created_at is not None:
+            self._log("info", f"  created at  : {created_at}")
+        self._log("info", "──────────────────────────────────────────────────")
 
     def _cmd_delete_session(self) -> None:
         session = self._session_mgr.active
@@ -535,8 +586,14 @@ class AgentsApp(App):
                 return
             self.post_message(LogEvent(kind=kind, text=text))
 
+        def on_requires_action(actions: list) -> None:
+            dispatch_function_calls(self._client, session.session_id, actions, on_event)
+            # Re-open the stream to continue the turn after results are submitted
+            if not worker.is_cancelled:
+                stream_session(self._client, session.session_id, on_event, on_requires_action)
+
         try:
-            stream_session(self._client, session.session_id, on_event)
+            stream_session(self._client, session.session_id, on_event, on_requires_action)
         except Exception as exc:
             self.post_message(LogEvent(kind="error", text=str(exc)))
 
@@ -549,8 +606,15 @@ class AgentsApp(App):
                 return
             self.post_message(LogEvent(kind=kind, text=text))
 
+        def on_requires_action(actions: list) -> None:
+            dispatch_function_calls(self._client, self._session_mgr.active.session_id, actions, on_event)
+            if not worker.is_cancelled:
+                session = self._session_mgr.active
+                if session:
+                    stream_session(self._client, session.session_id, on_event, on_requires_action)
+
         try:
-            stream_events(events, on_event)
+            stream_events(events, on_event, on_requires_action)
         except Exception as exc:
             self.post_message(LogEvent(kind="error", text=str(exc)))
 

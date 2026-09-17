@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 from openai import OpenAI
 
@@ -11,18 +11,23 @@ def stream_session(
     client: OpenAI,
     session_id: str,
     on_event: Callable[[str, str], None],
+    on_requires_action: Optional[Callable[[list], None]] = None,
 ) -> None:
     """
     Open a new event stream for *session_id* and process it until the turn
     completes.  Delegates to ``stream_events``.
+
+    *on_requires_action(actions)* is called when the session pauses for
+    function results.  If omitted, the actions are only logged.
     """
     with client.beta.agents.sessions.events.stream(session_id) as events:
-        stream_events(events, on_event)
+        stream_events(events, on_event, on_requires_action)
 
 
 def stream_events(
     events: Iterable,
     on_event: Callable[[str, str], None],
+    on_requires_action: Optional[Callable[[list], None]] = None,
 ) -> None:
     """
     Process an already-open event iterable until the turn completes.
@@ -32,6 +37,9 @@ def stream_events(
       - kind="system"  → lifecycle / status description
       - kind="error"   → error message
       - kind="raw"     → full JSON string (verbose mode, all events)
+
+    *on_requires_action(actions)* is called when the session pauses waiting
+    for function-call results.  If omitted, the pause is only logged.
 
     Raises RuntimeError on stream-level failures.
     """
@@ -45,6 +53,12 @@ def stream_events(
         match event_type:
             case "agent.session.idle":
                 on_event("system", "Session idle")
+
+            case "agent.session.environment.connected":
+                env = getattr(event, "environment", None)
+                env_id = getattr(env, "id", None) if env else None
+                detail = f"  environment_id={env_id}" if env_id else ""
+                on_event("info", f"✓ Environment connected{detail}")
 
             case "agent.session.requires_action":
                 session_obj = getattr(event, "session", None)
@@ -60,10 +74,15 @@ def stream_events(
                         name = getattr(action, "name", "?")
                         call_id = getattr(action, "call_id", "?")
                         turn_id = getattr(action, "turn_id", "?")
+                        arguments = getattr(action, "arguments", None)
                         on_event("info", f"  function_call  name={name}  call_id={call_id}  turn_id={turn_id}")
+                        if arguments:
+                            on_event("info", f"  arguments: {arguments}")
                     else:
                         on_event("info", f"  {action_type}: {action.to_json() if hasattr(action, 'to_json') else action}")
-                return  # session is paused, not failed — stop draining the stream
+                if on_requires_action is not None:
+                    on_requires_action(actions)
+                return  # session is paused — stop draining this stream
 
             case "error":
                 msg = getattr(event, "error", None)
