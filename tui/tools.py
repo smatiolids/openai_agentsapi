@@ -100,12 +100,14 @@ def dispatch_function_calls(
                 output = json.dumps({"error": str(exc)})
                 on_event("error", f"← {name} raised: {exc}")
 
-        result_events.append({
-            "type": "agent.session.tool_call.output",
+        event: dict = {
+            "type": "agent.session.input.tool_result",
             "call_id": call_id,
             "turn_id": turn_id,
+            "success": fn is not None and not output.startswith('{"error":'),
             "output": output,
-        })
+        }
+        result_events.append(event)
 
     if result_events:
         client.beta.agents.sessions.events.create(session_id, events=result_events)

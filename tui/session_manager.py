@@ -95,8 +95,7 @@ class SessionManager:
 
         stream: Stream = self._client.beta.agents.sessions.create(**create_kwargs)
 
-        # The first event in the stream is always agent.session.created and
-        # carries the full AgentSession object (id, environment, …).
+        # The first event is always agent.session.created and carries the session id.
         session_obj = None
         for event in stream:
             if getattr(event, "type", "") == "agent.session.created":

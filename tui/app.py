@@ -123,6 +123,7 @@ class AgentsApp(App):
     def on_mount(self) -> None:
         self._log("info", "OpenAI Agents API TUI — type /help for commands")
         self._log("info", f"Config: model={self._config.model}  env={self._config.environment_type}")
+        self._update_subtitle()
         self.query_one("#input", Input).focus()
 
     # ── Input handling ───────────────────────────────────────────────────────
@@ -157,6 +158,11 @@ class AgentsApp(App):
         if not self._input_focused():
             return
         input_widget = self.query_one("#input", Input)
+        suggest = self.query_one("#suggest", OptionList)
+        if suggest.display and input_widget.value.startswith("/"):
+            idx = suggest.highlighted if suggest.highlighted is not None else 0
+            suggest.highlighted = max(0, idx - 1)
+            return
         if not self._history:
             return
         if self._history_pos == -1:
@@ -170,6 +176,11 @@ class AgentsApp(App):
         if not self._input_focused():
             return
         input_widget = self.query_one("#input", Input)
+        suggest = self.query_one("#suggest", OptionList)
+        if suggest.display and input_widget.value.startswith("/"):
+            idx = suggest.highlighted if suggest.highlighted is not None else 0
+            suggest.highlighted = min(suggest.option_count - 1, idx + 1)
+            return
         if self._history_pos == -1:
             return
         if self._history_pos < len(self._history) - 1:
@@ -182,8 +193,9 @@ class AgentsApp(App):
 
     def _set_input_history(self, input_widget: Input, value: str) -> None:
         """Set input value from history and suppress the autocomplete list."""
-        input_widget.value = value
-        input_widget.cursor_position = len(value)
+        with input_widget.prevent(Input.Changed):
+            input_widget.value = value
+            input_widget.cursor_position = len(value)
         self.query_one("#suggest", OptionList).display = False
 
     def action_autocomplete(self) -> None:
@@ -271,14 +283,16 @@ class AgentsApp(App):
                 # Normalise "self" → "self_hosted", "openai" → "openai_hosted"
                 mapping = {"none": "none", "self": "self_hosted", "openai": "openai_hosted"}
                 self._config.environment_type = mapping[env]
-                self._log("info", f"Environment set to: {self._config.environment_type}")
+                self._log("info", f"Config: model={self._config.model}  env={self._config.environment_type}")
+                self._update_subtitle()
 
             case "set-model":
                 if not parsed.args:
                     self._log("error", "Usage: /set-model <model>")
                     return
                 self._config.model = parsed.args[0]
-                self._log("info", f"Model set to: {self._config.model}")
+                self._log("info", f"Config: model={self._config.model}  env={self._config.environment_type}")
+                self._update_subtitle()
 
             case "set-instructions":
                 if not parsed.args:
@@ -304,7 +318,10 @@ class AgentsApp(App):
             case "delete-session":
                 self._run_command(self._cmd_delete_session)
 
-            case "delete-other-sessions":
+            case "cancel-turn":
+                self._run_command(self._cmd_cancel_turn)
+
+            case "clear-sessions":
                 self._run_command(self._cmd_delete_other_sessions)
 
             case "session-stats":
@@ -343,24 +360,11 @@ class AgentsApp(App):
         self._log("info", f"Session created: {session.session_id}")
         if session.environment_id:
             self._log("info", f"  environment_id: {session.environment_id}")
-
-        if self._config.environment_type == "openai_hosted":
-            if not session.environment_remote_url or not session.environment_id:
-                self._log("error", "openai_hosted session missing remote_url / environment_id")
-                return
-            self._log("system", "Launching CODEX harness…")
-            try:
-                self._harness_mgr.start(
-                    session_id=session.session_id,
-                    remote_url=session.environment_remote_url,
-                    environment_id=session.environment_id,
-                )
-                self._log("info", "CODEX harness started.")
-            except Exception as exc:
-                self._log("error", f"Failed to start CODEX harness: {exc}")
+        if self._config.environment_type == "self_hosted" and session.environment_remote_url:
+            self._log("info", f"  remote_url: {session.environment_remote_url}")
 
         session_id = session.session_id
-        self.call_from_thread(setattr, self, "sub_title", f"session: {session_id[:12]}…")
+        self.call_from_thread(self._update_subtitle)
 
         if init_stream is not None:
             self._log("output", f"You: {initial}")
@@ -387,7 +391,7 @@ class AgentsApp(App):
             self._log("error", f"Failed to connect to session: {exc}")
             return
         self._log("info", f"Connected to session: {session.session_id}")
-        self.call_from_thread(setattr, self, "sub_title", f"session: {session.session_id[:12]}…")
+        self.call_from_thread(self._update_subtitle)
 
         # Print current session state
         status = getattr(session_obj, "status", None)
@@ -427,7 +431,22 @@ class AgentsApp(App):
             self._log("error", f"Failed to delete session: {exc}")
             return
         self._log("info", "Session deleted.")
-        self.call_from_thread(setattr, self, "sub_title", "")
+        self.call_from_thread(self._update_subtitle)
+
+    def _cmd_cancel_turn(self) -> None:
+        session = self._session_mgr.active
+        if session is None:
+            self._log("error", "No active session.")
+            return
+        try:
+            self._client.beta.agents.sessions.events.create(
+                session.session_id,
+                events=[{"type": "agent.session.input.cancel"}],
+            )
+        except Exception as exc:
+            self._log("error", f"Failed to cancel turn: {exc}")
+            return
+        self._log("info", "Turn cancel requested.")
 
     def _cmd_delete_other_sessions(self) -> None:
         active = self._session_mgr.active
@@ -633,6 +652,17 @@ class AgentsApp(App):
                 if w is not event.worker
             )
         )
+
+    def _update_subtitle(self) -> None:
+        """Rebuild the Header sub-title to reflect current model and environment."""
+        parts = [
+            f"model={self._config.model}",
+            f"env={self._config.environment_type}",
+        ]
+        session = self._session_mgr.active
+        if session:
+            parts.insert(0, f"session={session.session_id[:12]}…")
+        self.sub_title = "  ".join(parts)
 
     def _run_command(self, fn) -> None:
         """Run *fn* in a thread worker so the UI stays responsive and the

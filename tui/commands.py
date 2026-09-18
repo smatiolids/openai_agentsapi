@@ -16,7 +16,8 @@ Available commands:
                                        --tool_cep registers the get_customer/CEP lookup function tool
   /connect-session <session_id>        Connect to an existing session by ID
   /delete-session                      Delete the active session
-  /delete-other-sessions               Delete all API sessions except the currently active one
+  /cancel-turn                         Cancel the active session's current turn
+  /clear-sessions                      Delete all API sessions except the currently active one
   /list-sessions [<limit>]             List active sessions from the API (default limit: 20)
   /session-stats                       Show token usage summary for the active session
   /session-inspect                     Print all session attributes as copy-pasteable Python
@@ -58,7 +59,8 @@ KNOWN_COMMANDS = {
     "create-session",
     "connect-session",
     "delete-session",
-    "delete-other-sessions",
+    "cancel-turn",
+    "clear-sessions",
     "list-sessions",
     "session-stats",
     "session-inspect",
