@@ -1,5 +1,7 @@
 # OpenAI Agents API TUI
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A terminal user interface built with [Textual](https://textual.textualize.io/) for interacting with the **OpenAI Agents API**. Supports creating and managing sessions, sending messages, streaming agent responses, and launching the CODEX harness as a subprocess for `openai_hosted` environments.
 
 > 🤖 **Built with [IBM Bob](https://www.ibm.com/products/bob)**
@@ -146,6 +148,12 @@ Create a `.env` file at the project root to set these:
 OPENAI_API_KEY=sk-...
 CODEX_API_KEY=sk-...
 ```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 
