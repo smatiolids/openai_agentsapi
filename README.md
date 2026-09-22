@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[![Watch the demo](https://img.youtube.com/vi/eaw8XBdm4RI/maxresdefault.jpg)](https://youtu.be/eaw8XBdm4RI)
+
 A terminal user interface built with [Textual](https://textual.textualize.io/) for interacting with the **OpenAI Agents API**. Supports creating and managing sessions, sending messages, streaming agent responses, and launching the CODEX harness as a subprocess for `openai_hosted` environments.
 
 > 🤖 **Built with [IBM Bob](https://www.ibm.com/products/bob)**
